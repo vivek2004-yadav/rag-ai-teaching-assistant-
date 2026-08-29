@@ -1,4 +1,4 @@
-# RAG AI Teaching Assistant (ChromaDB Vector Database)
+# RAG AI Teaching Assistant
 
 A production-ready **Retrieval-Augmented Generation (RAG)** system designed to index educational video playlists into a persistent **ChromaDB Vector Database**. Users can ask questions in natural language and receive grounded answers complete with exact video titles and precise timestamp citations.
 
@@ -65,23 +65,3 @@ Start the interactive search CLI:
 python3 process_incoming.py
 ```
 Type your question when prompted (e.g., *"Where is CSS Box Model taught?"* or *"Explain semantic tags"*) to receive the answer and timestamp references.
-
----
-
-## ⚙️ Building / Re-Indexing the Vector Database
-
-To index new videos or re-build the ChromaDB vector database:
-
-1. **Convert Video to MP3:** Place lecture videos in the root folder and run:
-   ```bash
-   python3 video_to_mp3.py
-   ```
-2. **Transcribe Audio to JSON:** Run Whisper to generate timestamped text transcripts in `jsons/`:
-   ```bash
-   python3 mp3_to_json.py
-   ```
-3. **Generate & Index Vectors into ChromaDB:**
-   ```bash
-   python3 preprocess_json.py
-   ```
-   *This merges speech fragments into paragraphs, generates Gemini embeddings, and stores them in `./chroma_db`.*

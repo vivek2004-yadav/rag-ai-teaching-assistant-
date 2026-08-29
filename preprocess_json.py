@@ -51,10 +51,9 @@ from sklearn.metrics.pairwise import cosine_similarity  # Import cosine_similari
 import joblib  # Import joblib to save and load Python objects on disk
 import time  # Import time module to add delays during retries and backoff
 from dotenv import load_dotenv  # Import load_dotenv to load settings from configuration files
+from vector_db import RAGVectorDB  # Import vector database manager
 
-# Load Gemini API key from the user's backend configuration path
-load_dotenv(r"c:\Users\enqui\Desktop\Placement\backend\.env")  
-# Load Gemini API key from a local .env configuration file if present
+# Load Gemini API key from local environment configuration file
 load_dotenv()  
 
 # Retrieve the Gemini API key from environment variables
@@ -66,110 +65,139 @@ if not api_key:
     # Exit script execution immediately
     exit(1)  
 
-# Define the new embedding function targeting the Google Gemini cloud API
+# # Define the embedding function targeting Google Gemini embedContent REST API
 def create_embedding(text_list):  
-    # Replace empty/whitespace strings with a single space to avoid Gemini API errors
     sanitized_texts = [text if text.strip() else " " for text in text_list]  
-    
-    # Construct the Gemini REST API URL for batch embedding generation
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key={api_key}"  
-    # Initialize empty list to accumulate generated embeddings
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"  
     embeddings = []  
-    # Set the request batch size to 100 to stay within limits of the API
-    batch_size = 100  
     
-    # Loop over the text list in batches of 100
-    for i in range(0, len(sanitized_texts), batch_size):  
-        # Slice the list to retrieve the current batch of texts
-        batch = sanitized_texts[i:i+batch_size]  
-        # Initialize an empty list to build the request payload structure
-        requests_payload = []  
-        # Loop through each text in the current batch
-        for text in batch:  
-            # Format and append payload structure expected by Google's API
-            requests_payload.append({  
-                "model": "models/gemini-embedding-2",  
-                "content": {  
-                    "parts": [{"text": text}]  
-                }  
-            })  
-            
-        # Define maximum retry attempts to handle transient errors
-        max_retries = 5  
-        # Try to call the API, retrying up to max_retries times
+    for text in sanitized_texts:  
+        payload = {  
+            "model": "models/gemini-embedding-001",  
+            "content": {  
+                "parts": [{"text": text}]  
+            }  
+        }  
+        max_retries = 10  
         for attempt in range(1, max_retries + 1):  
-            # Try block to catch failures and status codes
             try:  
-                # Send the POST request to Google Gemini API
-                response = requests.post(url, json={"requests": requests_payload}, timeout=60.0)  
-                # If rate limit (429) is hit, print warning and wait
-                if response.status_code == 429:  
-                    # Notify user that rate limit occurred and delay is triggered
-                    print(f"Rate limited (429). Retrying in 15 seconds... (Attempt {attempt}/{max_retries})")  
-                    # Sleep execution for 15 seconds to cool down the rate limit
-                    time.sleep(15)  
-                    # Continue loop to next retry attempt
+                r = requests.post(url, json=payload, timeout=30.0)  
+                if r.status_code == 429:  
+                    print(f"Rate limited (429). Cooling down 5s... (Attempt {attempt}/{max_retries})", flush=True)  
+                    time.sleep(5)  
                     continue  
-                # Raise an error if the status code indicates a failure
-                response.raise_for_status()  
-                # Parse the response payload into a JSON dictionary
-                res_json = response.json()  
-                # Loop through the list of generated embeddings returned by the API
-                for emb in res_json.get("embeddings", []):  
-                    # Append the vector float values to our embeddings list
-                    embeddings.append(emb["values"])  
-                # Break out of retry loop on success
+                r.raise_for_status()  
+                embeddings.append(r.json()["embedding"]["values"])  
+                time.sleep(0.3)  # 0.3s delay between calls for smooth throughput
                 break  
-            # Catch block for exceptions
             except Exception as e:  
-                # Check if this was the last allowed retry attempt
                 if attempt == max_retries:  
-                    # Raise the error and abort if all retries failed
                     raise e  
-                # Print a warning and retry status
-                print(f"Error: {e}. Retrying in 10 seconds...")  
-                # Sleep execution for 10 seconds before next attempt
-                time.sleep(10)  
+                time.sleep(3)  
                 
-    # Return the list of generated embedding vectors
     return embeddings  
 
 
-# Fetch all transcript json files from the jsons directory
+def merge_chunks(chunks, group_size=15):
+    """
+    Merges small 2-3 second Whisper speech fragments into 45-60 second rich paragraph chunks
+    for vastly improved RAG semantic retrieval accuracy and faster vector indexing.
+    """
+    merged = []
+    for i in range(0, len(chunks), group_size):
+        group = chunks[i:i+group_size]
+        combined_text = " ".join(c['text'].strip() for c in group if c.get('text'))
+        if not combined_text:
+            continue
+        merged.append({
+            "number": str(group[0].get("number", "")),
+            "title": str(group[0].get("title", "")),
+            "start": float(group[0].get("start", 0.0)),
+            "end": float(group[-1].get("end", 0.0)),
+            "text": combined_text
+        })
+    return merged
+
+
 jsons = [f for f in os.listdir("jsons") if f.endswith(".json")]  
+jsons.sort()
+
 # Initialize list to hold chunks and their vector embeddings
 my_dicts = []  
-# Initialize sequential ID tracking for index
-chunk_id = 0  
+
+# Initialize ChromaDB vector database manager
+vector_db = RAGVectorDB(db_path="./chroma_db", collection_name="teaching_assistant")
+
+# Get list of video numbers already indexed in ChromaDB for incremental processing
+existing_res = vector_db.collection.get(include=["metadatas"])
+existing_numbers = set(str(m.get("number", "")) for m in existing_res.get("metadatas", []))
+chunk_id = vector_db.count()
 
 # Loop through each transcript file name
 for json_file in jsons:  
     # Open the JSON transcript file explicitly with UTF-8 encoding
     with open(f"jsons/{json_file}", encoding="utf-8") as f:  
-        # Load JSON dictionary content
         content = json.load(f)  
-    # Print status indicating embedding creation has started
-    print(f"Creating Embeddings for {json_file}")  
+    
+    video_num = str(content.get("chunks", [{}])[0].get("number", ""))
+    if video_num and video_num in existing_numbers:
+        print(f"Skipping {json_file} (Video {video_num} already indexed in ChromaDB)", flush=True)
+        continue
+
+    # Merge micro-chunks into paragraph chunks
+    paragraphs = merge_chunks(content.get("chunks", []), group_size=15)
+    
+    print(f"Processing {json_file} ({len(paragraphs)} paragraph chunks)...", flush=True)  
+    
+    # Enrich text chunks with video title context for higher quality semantic matching
+    texts_to_embed = [
+        f"Video {p.get('number', '')}: {p.get('title', '')} - {p['text']}"
+        for p in paragraphs
+    ]
+    
     # Send all text chunks of this transcript to get embeddings
-    embeddings = create_embedding([c['text'] for c in content['chunks']])  
+    embeddings = create_embedding(texts_to_embed)  
+
+    ids = []
+    chunk_metadatas = []
+    documents = []
+    chunk_embeddings = []
        
-    # Loop through each chunk of text in the loaded file
-    for i, chunk in enumerate(content['chunks']):  
-        # Assign unique sequential ID to chunk
-        chunk['chunk_id'] = chunk_id  
-        # Store the corresponding Gemini embedding vector
-        chunk['embedding'] = embeddings[i]  
-        # Increment sequential ID tracking
+    # Loop through each merged paragraph chunk
+    for i, p in enumerate(paragraphs):  
+        c_id = f"chunk_{chunk_id}"
+        p['chunk_id'] = chunk_id  
+        p['embedding'] = embeddings[i]  
+        
+        ids.append(c_id)
+        chunk_embeddings.append(embeddings[i])
+        documents.append(p['text'])
+        chunk_metadatas.append({
+            "number": str(p.get("number", "")),
+            "title": str(p.get("title", "")),
+            "start": float(p.get("start", 0.0)),
+            "end": float(p.get("end", 0.0))
+        })
+        
         chunk_id += 1  
-        # Append chunk data to accumulator list
-        my_dicts.append(chunk)  
+        my_dicts.append(p)  
 
-# Build a Pandas DataFrame from the list of chunks
-df = pd.DataFrame.from_records(my_dicts)  
-# Save the final DataFrame as a Gemini-compatible embeddings database
-joblib.dump(df, 'embeddings_gemini.joblib')  
-# Print final completion status message
-print(f"Success! Generated embeddings for {len(df)} chunks and saved to embeddings_gemini.joblib.")  
+    # Upsert chunk batch into ChromaDB collection
+    vector_db.add_chunks(
+        ids=ids,
+        embeddings=chunk_embeddings,
+        metadatas=chunk_metadatas,
+        documents=documents
+    )
+    existing_numbers.add(video_num)
+    print(f"  Successfully indexed {len(ids)} paragraph chunks from {json_file}", flush=True)
 
+# Save joblib backup if any dicts processed
+if my_dicts:
+    try:
+        df = pd.DataFrame.from_records(my_dicts)  
+        joblib.dump(df, 'embeddings_gemini.joblib')  
+    except Exception:
+        pass
 
-
+print(f"Success! Total indexed chunks in ChromaDB: {vector_db.count()}", flush=True)

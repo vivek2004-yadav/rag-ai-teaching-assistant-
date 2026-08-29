@@ -59,11 +59,11 @@ import numpy as np  # Import numpy for numerical/vector array processing
 import joblib  # Import joblib to save and load Python objects on disk
 import requests  # Import requests library to make HTTP REST API calls to Google Gemini
 import os  # Import os module to check file paths and environment variables
+import json  # Import json module to handle json formatting
 from dotenv import load_dotenv  # Import load_dotenv to load settings from configuration files
+from vector_db import RAGVectorDB  # Import vector database manager
 
-# Load Gemini API key from the user's backend configuration path
-load_dotenv(r"c:\Users\enqui\Desktop\Placement\backend\.env")  
-# Load Gemini API key from a local .env configuration file if present
+# Load Gemini API key from local environment configuration file
 load_dotenv()  
 
 # Retrieve the Gemini API key from environment variables
@@ -78,10 +78,10 @@ if not api_key:
 # Define the function to generate vector embedding for user queries via Gemini API
 def create_embedding(text_list):  
     # Construct the Gemini REST API URL for query embedding generation
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"  
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={api_key}"  
     # Prepare the payload with the target embedding model and the input text
     payload = {  
-        "model": "models/gemini-embedding-2",  
+        "model": "models/gemini-embedding-001",  
         "content": {  
             "parts": [{"text": text_list[0]}]  
         }  
@@ -154,39 +154,44 @@ def inference(prompt):
     # Raise the last caught exception if all models failed
     raise last_err  
 
-# Specify name of the Gemini-compatible embeddings database file
-embeddings_file = 'embeddings_gemini.joblib'  
-# Check if embeddings database file does not exist on disk
-if not os.path.exists(embeddings_file):  
-    # Print error message to stdout
-    print(f"ERROR: {embeddings_file} not found. Please run 'python preprocess_json.py' first.")  
-    # Exit script execution immediately
-    exit(1)  
+# Check Vector Database availability
+db_path = "./chroma_db"
 
-# Load the vector embeddings DataFrame from disk using joblib
-df = joblib.load(embeddings_file)  
+if not os.path.exists(db_path):  
+    print(f"ERROR: Vector Database ('{db_path}') was not found. Please run 'python preprocess_json.py' to initialize ChromaDB.")  
+    exit(1)  
 
 # Prompt the user to input their question in terminal
 incoming_query = input("Ask a Question: ")  
 # Generate the vector embedding for user query
 question_embedding = create_embedding([incoming_query])[0]  
 
-# Calculate cosine similarity between user query and all database vectors
-similarities = cosine_similarity(np.vstack(df['embedding']), [question_embedding]).flatten()  
-# Set number of top relevant results to retrieve
-top_results = 5  
-# Get the indexes of the top 5 highest similarity scores
-max_indx = similarities.argsort()[::-1][0:top_results]  
-# Extract corresponding rows from the database DataFrame
-new_df = df.loc[max_indx]  
+matched_chunks = []
 
-# Construct prompt template with retrieve context chunks
+# Perform search via ChromaDB vector store
+vector_db = RAGVectorDB(db_path=db_path, collection_name="teaching_assistant")
+query_res = vector_db.query(query_embedding=question_embedding, n_results=10)
+
+docs = query_res.get("documents", [[]])[0]
+metas = query_res.get("metadatas", [[]])[0]
+
+for i in range(len(docs)):
+    meta = metas[i]
+    matched_chunks.append({
+        "title": meta.get("title", ""),
+        "number": meta.get("number", ""),
+        "start": meta.get("start", 0.0),
+        "end": meta.get("end", 0.0),
+        "text": docs[i]
+    })
+
+# Construct prompt template with retrieved context chunks
 prompt = f'''I am teaching web development in my Sigma web development course. Here are video subtitle chunks containing video title, video number, start time in seconds, end time in seconds, the text at that time:
 
-{new_df[["title", "number", "start", "end", "text"]].to_json(orient="records")}
+{json.dumps(matched_chunks, ensure_ascii=False)}
 ---------------------------------
 "{incoming_query}"
-User asked this question related to the video chunks, you have to answer in a human way (dont mention the above format, its just for you) where and how much content is taught in which video (in which video and at what timestamp) and guide the user to go to that particular video. If user asks unrelated question, tell him that you can only answer questions related to the course
+User asked this question related to the video chunks, you have to answer in a clear and natural way (dont mention the above raw data format, it is just for your reference) where and how much content is taught in which video (including video title, number, and timestamps). Respond in English. If user asks an unrelated question, inform them that you can only answer questions related to the course.
 '''  
 # Open prompt.txt explicitly with UTF-8 encoding
 with open("prompt.txt", "w", encoding="utf-8") as f:  
@@ -206,4 +211,5 @@ print("-----------------------------------")
 with open("response.txt", "w", encoding="utf-8") as f:  
     # Save final response output to disk
     f.write(response)  
+  
 

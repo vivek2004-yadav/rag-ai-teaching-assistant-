@@ -1,12 +1,1 @@
-Hello! It sounds like you're interested in getting started with HTML in your Sigma web development course.
-
-Based on the course content, HTML is presented as the fundamental building block for web development, and it's highly recommended to learn it first.
-
-You can find discussions about how to start with HTML and its importance in **Video 1: "Installing VS Code & How Websites Work"**:
-
-*   Around **1163.9 seconds**, it's mentioned that if a beginner learns 80% of HTML, they are well-prepared for web development.
-*   The speaker specifically advises learning HTML, CSS, and JavaScript one by one, with **HTML being the first step**, urging students to learn 100% HTML before moving on. This is discussed around **1405.9 seconds**.
-*   HTML's role as the basic structure or "skeleton" of a website is explained using analogies (like a car's skeleton or a human skeleton) starting from about **1638.9 seconds** to **1671.9 seconds**.
-*   It's also reiterated around **1097.9 seconds** that HTML creates the very basic skeleton of a website.
-
-So, to understand how to start with HTML, I recommend checking out **Video 1: "Installing VS Code & How Websites Work"** and paying close attention to the segments mentioned above, particularly from **1405.9 seconds** onwards for the learning path guidance.
+Based on the video subtitle chunks provided, there is no explicit mention of "semantic tags" being taught in the course. The information available discusses general HTML, CSS, and JavaScript learning, the overall course structure, projects, and an analogy for the core technologies, but it does not specify content related to semantic HTML tags.

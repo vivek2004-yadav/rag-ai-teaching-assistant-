@@ -42,26 +42,3 @@ RAG-AI-Teaching-Assistant/
 ├── .env                      # API Key configuration file (ignored by Git)
 └── Readme.md                 # Project documentation
 ```
-
----
-
-## 🚀 How to Setup and Run
-
-### 1. Install Dependencies
-Install all required Python packages:
-```bash
-pip install chromadb requests python-dotenv joblib numpy scikit-learn openai-whisper
-```
-
-### 2. Configure Gemini API Key
-Create a `.env` file in the root directory:
-```env
-GEMINI_API_KEY=your_actual_gemini_api_key
-```
-
-### 3. Run the Interactive Assistant
-Start the interactive search CLI:
-```bash
-python3 process_incoming.py
-```
-Type your question when prompted (e.g., *"Where is CSS Box Model taught?"* or *"Explain semantic tags"*) to receive the answer and timestamp references.

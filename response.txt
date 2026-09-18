@@ -1,1 +1,0 @@
-Based on the video subtitle chunks provided, there is no explicit mention of "semantic tags" being taught in the course. The information available discusses general HTML, CSS, and JavaScript learning, the overall course structure, projects, and an analogy for the core technologies, but it does not specify content related to semantic HTML tags.

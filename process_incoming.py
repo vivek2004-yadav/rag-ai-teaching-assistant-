@@ -10,9 +10,9 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.tools import tool
-from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
 # Load API keys from .env
 load_dotenv()
@@ -71,45 +71,54 @@ else:
         collection_name="teaching_assistant"
     )
 
-# 3. Agent Tool (retriever_tool)
-@tool
-def retriever_tool(query: str) -> str:
-    """This tool retrieves relevant video subtitle chunks, including video titles and timestamps for web development course questions."""
-    print("Tool Called:", query)
-    retrieved_docs = vector_store.similarity_search(query=query, k=4)
-    
-    context = ""
-    for doc in retrieved_docs:
-        meta = doc.metadata
-        context += (
-            f"Video Title: {meta.get('title')} (Video #{meta.get('number')})\n"
-            f"Timestamps: {meta.get('start')}s - {meta.get('end')}s\n"
-            f"Content: {doc.page_content}\n\n"
-        )
-    return context
+# 3. Setup Vector Store Retriever & Context Formatter
+retriever = vector_store.as_retriever(search_kwargs={"k": 4})
 
-# 4. LLM & System Prompt Setup
+def format_docs(docs):
+    formatted_chunks = []
+    for doc in docs:
+        meta = doc.metadata
+        formatted_chunks.append(
+            f"Video Title: {meta.get('title', 'N/A')} (Video #{meta.get('number', 'N/A')})\n"
+            f"Timestamps: {meta.get('start', 0.0)}s - {meta.get('end', 0.0)}s\n"
+            f"Content: {doc.page_content}"
+        )
+    return "\n\n---\n\n".join(formatted_chunks)
+
+# 4. Prompt Template & RAG Pipeline Setup
+prompt_template = """You are an AI Teaching Assistant for web development video tutorials.
+Answer the student's question based strictly on the retrieved context below.
+Always cite the relevant video title, video number, and specific start/end timestamps in your response.
+
+Retrieved Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+
+prompt = ChatPromptTemplate.from_template(prompt_template)
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key)
 
-System_Prompt = """You are a helpful assistant that answers questions using retrieved context from web development video tutorials.
-ALWAYS use the `retriever_tool` tool for questions requiring external knowledge.
-Include video titles and timestamps in your answer."""
-
-memory = InMemorySaver()
-
-agent = create_react_agent(
-    model=llm,
-    tools=[retriever_tool],
-    prompt=System_Prompt,
-    checkpointer=memory
+rag_chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
 )
 
 # 5. Execute Query
-query = input("\nAsk a question about the course: ")
-if query.strip():
-    config = {"configurable": {"thread_id": "1"}}
-    response = agent.invoke({"messages": [{"role": "user", "content": query}]}, config=config)
-    result = response["messages"][-1].content
+def main():
+    print("\n=======================================================")
+    print(" RAG AI Teaching Assistant - Retrieval Pipeline Active")
+    print("=======================================================\n")
+    
+    query = input("Ask a question about the course (or type 'exit' to quit): ")
+    if query.strip() and query.strip().lower() not in ["exit", "quit"]:
+        print("\nRetrieving relevant lecture segments and generating answer...")
+        answer = rag_chain.invoke(query)
+        print("\n--- Answer ---")
+        print(answer)
 
-    print("\n--- Agent Answer ---")
-    print(result)
+if __name__ == "__main__":
+    main()
